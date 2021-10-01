@@ -8,7 +8,7 @@
 #include <stdbool.h>
 #include <pthread.h>
 
-typedef void* (*lbthread_proc)(void* arg);
+typedef void* (*lbthread_proc)(struct lbthread_context* ptc);
 
 
 

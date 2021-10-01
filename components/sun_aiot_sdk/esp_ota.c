@@ -14,6 +14,8 @@
 #include "freertos/task.h"
 #include "esp_http_client.h"
 #include "lbthread.h"
+#include "sun_sdk_inc/sun_aiot_api.h"
+
 #define BUFFSIZE 1024
 #define HASH_LEN 32 /* SHA-256 digest length */
 #define CONFIG_EXAMPLE_GPIO_DIAGNOSTIC 4
@@ -23,14 +25,25 @@ static char ota_write_data[BUFFSIZE + 1] = { 0 };
 #define OTA_URL_SIZE 256
 #define CONFIG_SUN_DEFAULT_RECV_TIMEOUT         10000
 
+#define SUN_AIOT_OTA_MSG_PREPARE_ERROR          -1
+#define SUN_AIOT_OTA_MSG_CONNECT_ERROR          -2
+#define SUN_AIOT_OTA_MSG_DOWNLOAD_ERROR         -3
+#define SUN_AIOT_OTA_MSG_OTA_WRITE_ERROR        -4
+#define SUN_AIOT_OTA_MSG_OTA_END_ERROR          -5
+#define SUN_AIOT_OTA_MSG_BOOT_PARTITION         -6
+
 typedef struct{
     struct lbthread_context* pota_thread;
     char* purl;
     esp_http_client_config_t    cfg;
     esp_http_client_handle_t*   pclient;
-    e_aiot_http_msg_type        msg_type;
+    e_aiot_ota_msg_type         msg_type;
     http_download_info          hdp;
     int                         percent;
+
+    // ota callback
+    on_ota_msg_cb               ota_cb;
+    void*                       owner;
 } esp_ota_task;
 static void http_cleanup(esp_http_client_handle_t client)
 {
@@ -146,7 +159,7 @@ int esp_ota_prepare()
         }
     }
     lbinfo("esp_ota_prepare end\n");
-    return 0;
+    return ESP_OK;
 }
 
 int esp_http_ota(const char* purl)
@@ -158,6 +171,11 @@ int esp_http_ota(const char* purl)
 
     lbinfo("Starting OTA example");
     err = esp_ota_prepare();
+    if(ESP_OK != err)
+    {
+        lberror("err:%d = esp_ota_prepare()\n", err);
+        return err;
+    }
     lbinfo("err:%d = esp_ota_prepare()\n", err);
 
     const esp_partition_t *configured = esp_ota_get_boot_partition();
@@ -330,10 +348,23 @@ int esp_http_ota(const char* purl)
     return 0;
 }
 
+int ota_event_notify(esp_ota_task* peot, long msg_id, long wparam, long lparam)
+{
+    //lbinfo("ota_cb:%p(peot:%p, msg_id:%ld, wparam:%ld, lparam:%ld)\n", peot ? peot->ota_cb : NULL, peot, msg_id, wparam, lparam);
+    if(peot && peot->ota_cb)
+    {
+        peot->ota_cb(peot->owner, msg_id, wparam, lparam);
+        return 0;
+    }
+
+    return -1;
+}
+
 void* ota_thread_proc(void* arg)
 {
     esp_err_t err;
     esp_ota_handle_t update_handle = 0 ;
+    int percent = 0;
     unsigned long begin_time = lbget_sys_time();
     unsigned long last_update_time = begin_time;
     unsigned long last_update_bytes = 0;
@@ -345,6 +376,14 @@ void* ota_thread_proc(void* arg)
     //lbinfo("ota thread begin, ptc:%p, peot:%p\n", ptc, peot);
 
     err = esp_ota_prepare();
+    if(ESP_OK != err)
+    {
+        lberror("err:%d = esp_ota_prepare()\n", err);
+        ota_event_notify(peot, e_aiot_ota_msg_type_error, errno, SUN_AIOT_OTA_MSG_PREPARE_ERROR);
+        return NULL;
+    }
+
+    ota_event_notify(peot, e_aiot_ota_msg_type_prepared, 0, 0);
     //lbinfo("err:%d = esp_ota_prepare()\n", err);
     //lbcheck_return(err, "err:%d = esp_ota_prepare()\n", err);
     const esp_partition_t *configured = esp_ota_get_boot_partition();
@@ -366,8 +405,11 @@ void* ota_thread_proc(void* arg)
         lberror("Failed to open HTTP connection: %s", esp_err_to_name(err));
         //lberror("Failed to open HTTP connection: %s", esp_err_to_name(err));
         esp_http_client_cleanup(peot->pclient);
+        ota_event_notify(peot, e_aiot_ota_msg_type_error, errno, SUN_AIOT_OTA_MSG_PREPARE_ERROR);
         task_fatal_error();
+        return NULL;
     }
+    ota_event_notify(peot, e_aiot_ota_msg_type_connected, 0, 0);
     esp_http_client_fetch_headers(peot->pclient);
     peot->msg_type = e_aiot_http_msg_on_response_body_progress;
     peot->hdp.ltotal_bytes = esp_http_client_get_content_length(peot->pclient);
@@ -378,6 +420,7 @@ void* ota_thread_proc(void* arg)
     int binary_file_length = 0;
     // deal with all receive packet
     bool image_header_was_checked = false;
+    ota_event_notify(peot, e_aiot_ota_msg_type_download_progress, 0, 0);
     while(lbthread_is_alive(ptc))
     {
         int data_read = esp_http_client_read(peot->pclient, ota_write_data, BUFFSIZE);
@@ -385,7 +428,9 @@ void* ota_thread_proc(void* arg)
         if (data_read < 0) {
             lberror("Error: SSL data read error");
             http_cleanup(peot->pclient);
+            ota_event_notify(peot, e_aiot_ota_msg_type_error, errno, SUN_AIOT_OTA_MSG_DOWNLOAD_ERROR);
             task_fatal_error();
+            return NULL;
         } else if (data_read > 0) {
             if (image_header_was_checked == false) {
                 esp_app_desc_t new_app_info;
@@ -429,12 +474,14 @@ void* ota_thread_proc(void* arg)
                     if (err != ESP_OK) {
                         lberror("esp_ota_begin failed (%s)", esp_err_to_name(err));
                         http_cleanup(peot->pclient);
+                        ota_event_notify(peot, e_aiot_ota_msg_type_error, errno, SUN_AIOT_OTA_MSG_OTA_END_ERROR);
                         task_fatal_error();
                     }
                     lbinfo("esp_ota_begin succeeded");
                 } else {
                     lberror("received package is not fit len");
                     http_cleanup(peot->pclient);
+                    ota_event_notify(peot, e_aiot_ota_msg_type_error, errno, SUN_AIOT_OTA_MSG_PREPARE_ERROR);
                     task_fatal_error();
                 }
             }
@@ -457,7 +504,13 @@ void* ota_thread_proc(void* arg)
 
             if(peot->hdp.ltotal_bytes)
             {
-                peot->percent = peot->hdp.ldownload_bytes * 100 / peot->hdp.ltotal_bytes;
+                percent = peot->hdp.ldownload_bytes * 100 / peot->hdp.ltotal_bytes;
+            }
+
+            if(percent > peot->percent)
+            {
+                peot->percent = percent < 100 ? percent : 99;
+                ota_event_notify(peot, e_aiot_ota_msg_type_download_progress, 0, peot->percent);
             }
             //lbinfo("ldownload_speed:%d, ldownload_bytes:%d, ltotal_bytes:%d, lspend_time_ms:%d, percent:%d\n", peot->hdp.ldownload_speed, peot->hdp.ldownload_bytes, peot->hdp.ltotal_bytes, peot->hdp.lspend_time_ms, peot->percent);
             binary_file_length += data_read;
@@ -481,8 +534,11 @@ void* ota_thread_proc(void* arg)
     if (esp_http_client_is_complete_data_received(peot->pclient) != true) {
         lberror("Error in receiving complete file");
         http_cleanup(peot->pclient);
+        ota_event_notify(peot, e_aiot_ota_msg_type_error, errno, SUN_AIOT_OTA_MSG_DOWNLOAD_ERROR);
         task_fatal_error();
     }
+
+    ota_event_notify(peot, e_aiot_ota_msg_type_download_complete, 0, 0);
 
     err = esp_ota_end(update_handle);
     if (err != ESP_OK) {
@@ -491,16 +547,19 @@ void* ota_thread_proc(void* arg)
         }
         lberror("esp_ota_end failed (%s)!", esp_err_to_name(err));
         http_cleanup(peot->pclient);
+        ota_event_notify(peot, e_aiot_ota_msg_type_error, errno, SUN_AIOT_OTA_MSG_OTA_END_ERROR);
         task_fatal_error();
     }
-
+    ota_event_notify(peot, e_aiot_ota_msg_type_ota_end, 0, 0);
     err = esp_ota_set_boot_partition(update_partition);
     if (err != ESP_OK) {
         lberror("esp_ota_set_boot_partition failed (%s)!", esp_err_to_name(err));
         http_cleanup(peot->pclient);
+        ota_event_notify(peot, e_aiot_ota_msg_type_error, errno, SUN_AIOT_OTA_MSG_BOOT_PARTITION);
         task_fatal_error();
     }
-    lbinfo("Prepare to restart system!");
+    lbinfo("Prepare to restart system, spend time:%lu\n", lbget_sys_time() - begin_time);
+    ota_event_notify(peot, e_aiot_ota_msg_type_reboot, 0, 0);
     esp_restart();
     return NULL;
 }
@@ -537,30 +596,30 @@ esp_err_t esp_ota_event_handle(esp_http_client_event_t *evt)
         case HTTP_EVENT_ON_CONNECTED:
         {
             lbinfo("on http connect!\n");
-            peot->msg_type = e_aiot_http_msg_on_connect_complete;
+            //peot->msg_type = e_aiot_http_msg_on_connect_complete;
             break;
         }
         case HTTP_EVENT_HEADERS_SENT:
         {
             lbinfo("HTTP_EVENT_HEADERS_SENT!\n");
-            peot->msg_type = e_aiot_http_msg_on_request_header_complete;
+            //peot->msg_type = e_aiot_http_msg_on_request_header_complete;
             break;
         }
         case HTTP_EVENT_ON_HEADER:
         {
-            lbinfo("HTTP_EVENT_ON_HEADER!\n");
+            //lbinfo("HTTP_EVENT_ON_HEADER!\n");
             break;
         }
         case HTTP_EVENT_ON_DATA:
         {
             //lbinfo("HTTP_EVENT_ON_DATA!\n");
-            peot->msg_type = e_aiot_http_msg_on_response_body_progress;
+            //peot->msg_type = e_aiot_http_msg_on_response_body_progress;
             break;
         }
         case HTTP_EVENT_ON_FINISH:
         {
             lbinfo("HTTP_EVENT_ON_FINISH!\n");
-            peot->msg_type = e_aiot_http_msg_on_response_complete;
+            //peot->msg_type = e_aiot_http_msg_on_response_complete;
             break;
         }
         case HTTP_EVENT_DISCONNECTED:
@@ -577,7 +636,7 @@ esp_err_t esp_ota_event_handle(esp_http_client_event_t *evt)
         default:
         {
             lberror("Invalid event id:%d\n");
-            peot->msg_type = e_aiot_http_msg_on_connect_error;
+            //peot->msg_type = e_aiot_http_msg_on_connect_error;
             break;
         }
     }
@@ -600,6 +659,17 @@ void* esp_http_create_ota_task(const char* purl)
     return peot;
 }
 
+int esp_http_ota_set_callback(void* handle, on_ota_msg_cb ota_cb, void* owner)
+{
+    esp_ota_task* peot = (esp_ota_task*)handle;
+
+    lbcheck_pointer(peot, -1, "Invalid parameter, peot:%p\n", peot);
+    peot->ota_cb = ota_cb;
+    peot->owner = owner;
+
+    return 0;
+}
+
 int esp_http_ota_start_task(void* task_id)
 {
     int ret = -1;
@@ -615,10 +685,11 @@ int esp_http_ota_start_task(void* task_id)
     lbinfo("%s ret:%d = lbthread_start(peot->pota_thread:%p)\n", __FUNCTION__, ret, peot->pota_thread);
     return ret;
 }
-int esp_http_ota_get_progress(void* task_id, e_aiot_http_msg_type* msg_type, http_download_info* phdp, int* percent)
+
+int esp_http_ota_get_progress(void* task_id, e_aiot_ota_msg_type* msg_type, http_download_info* phdp, int* percent)
 {
     esp_ota_task* peot = (esp_ota_task*)task_id;
-    lbinfo("%s(task_id:%p)\n", __FUNCTION__, task_id);
+    //lbinfo("%s(task_id:%p)\n", __FUNCTION__, task_id);
     lbcheck_pointer(peot, -1, "Invalid parameter, peot:%p\n", peot);
 
     if(msg_type)

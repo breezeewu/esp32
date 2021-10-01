@@ -465,13 +465,13 @@ int sun_aiot_api_http_post(void* handle, const char* path, const char* req, int*
     return ret;
 }
 
-void* sun_aiot_api_create_oat_download_task(void* handle, const char* dst_path, on_http_msg_cb download_cb, void* owner, aiot_ota_info* pota_info)
+void* sun_aiot_api_create_oat_task(void* handle, aiot_ota_info* pota_info)
 {
     void* task_id = NULL;
     ota_resp_info* pori = NULL;
     sun_aiot_context* psac = (sun_aiot_context*)handle;
     lbcheck_pointer(psac, NULL, "Invalid parameter, psac:%p\n", psac);
-    lbinfo("%s(handle:%p, dst_path:%p, download_cb:%p, owner:%p, pota_info:%p)", __FUNCTION__, handle, dst_path, download_cb, owner, pota_info);
+    lbinfo("%s(handle:%p, pota_info:%p)", __FUNCTION__, handle, pota_info);
     pori = http_post_ota_request(psac, pota_info);
     lbcheck_pointer(pori, NULL, "pori:%p = http_post_ota_request(psac:%p, pota_info:%p)", pori, psac, pota_info);
     
@@ -482,15 +482,17 @@ void* sun_aiot_api_create_oat_download_task(void* handle, const char* dst_path, 
         return NULL;
     }
     printf("get ota url, pori->pfileUrl:%s\n", pori->pfileUrl);
-    char* ota_path = "https://live-play-sit.sunvalleycloud.com/ota/hello-world.bin";
-    task_id = esp_http_create_ota_task(ota_path);
-    lbinfo("task_id:%p = esp_http_create_ota_task(ota_path:%s)\n", task_id, ota_path);
-    /*esp_http_ota_start_task(task_id);
-    sun_aiot_api_create_download_task(handle, )
-    task_id = http_create_download_task(psac, pori->pfileUrl, dst_path, download_cb, owner);
-    lbtrace("task_id:%p = http_create_download_task(psac:%p, pori->pfileUrl:%s, dst_path:%p, download_cb:%p, owner:%p)\n", task_id, psac, pori->pfileUrl, dst_path, download_cb, owner);
-	http_free_ota_response(pori);*/
+    //char* ota_path = "https://live-play-sit.sunvalleycloud.com/ota/hello-world.bin";
+    task_id = esp_http_create_ota_task(pori->pfileUrl);
+    lbinfo("task_id:%p = esp_http_create_ota_task(ota_path:%s)\n", task_id, pori->pfileUrl);
+
     return task_id;
+}
+
+int sun_aiot_api_set_ota_callback(void* task_id, on_ota_msg_cb ota_cb, void* owner)
+//int sun_aiot_api_set_download_callback(void* task_id, on_http_msg_cb download_cb, void* owner)
+{
+    return esp_http_ota_set_callback(task_id, ota_cb, owner);
 }
 
 /*void* sun_aiot_api_create_download_task(void* handle, const char* path, const char* dst_path, on_http_msg_cb download_cb, void* owner)
@@ -522,7 +524,7 @@ void* sun_aiot_api_create_oat_download_task(void* handle, const char* dst_path, 
     return task_id;
 }*/
 
-int sun_aiot_api_http_download_start(void* task_id)
+int sun_aiot_api_ota_start(void* task_id)
 {
     //int ret =  http_download_start_task(task_id);
     //lbtrace("ret:%d =  http_download_start_task(task_id:%p)\n", ret, task_id);
@@ -531,7 +533,7 @@ int sun_aiot_api_http_download_start(void* task_id)
     return ret;
 }
 
-int sun_aiot_api_http_download_get_progress(void* task_id, e_aiot_http_msg_type* msg_type, http_download_info* phdi, int* percent)
+int sun_aiot_api_ota_get_progress(void* task_id, e_aiot_ota_msg_type* msg_type, http_download_info* phdi, int* percent)
 {
     //int ret = http_download_get_progress(task_id, msg_type, phdp,  percent);
     //lbinfo("ret:%d = http_download_get_progress(task_id, msg_type, phdp,  percent:%d)\n", ret, percent ? -1 : *percent);
@@ -541,7 +543,7 @@ int sun_aiot_api_http_download_get_progress(void* task_id, e_aiot_http_msg_type*
     return ret;
 }
 
-int sun_aiot_api_http_download_stop(void* task_id)
+int sun_aiot_api_ota_stop(void* task_id)
 {
     //int ret = http_download_stop_task(task_id);
     //lbtrace("ret:%d =  http_download_stop_task(task_id:%p)\n", ret, task_id);
@@ -574,7 +576,7 @@ int sun_aiot_api_version(char* szver, int len)
     return 0;
 }
 
-int sun_aiot_api_mqtt_register_event_handle(void* handle, mqtt_event_callback mqtt_event_cb, void* powner)
+int sun_aiot_api_mqtt_register_event_handle(void* handle, esp_event_handler_t mqtt_event_cb, void* powner)
 {
     sun_aiot_context* psac = (sun_aiot_context*)handle;
     if(NULL == psac || NULL == psac->mqtt_handle)

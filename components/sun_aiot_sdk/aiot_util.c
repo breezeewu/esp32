@@ -317,7 +317,7 @@ int esp_http_post(sun_aiot_context* psac, const char* format, const char* path, 
     return phrc ? 0 : -1;
 }
 
-void* http_create_download_task(sun_aiot_context* psac, const char* path, const char* dst_path, on_download_cb download_cb, void* owner)
+/*void* http_create_download_task(sun_aiot_context* psac, const char* path, const char* dst_path, on_download_cb download_cb, void* owner)
 {
     int ret = -1;
     lbhttp_context* phc = NULL;
@@ -352,7 +352,7 @@ void* http_create_download_task(sun_aiot_context* psac, const char* path, const 
     lbhttp_response_context_close(&phc);
     lbinfo("%s failed, phc:%p\n", __FUNCTION__, phc);
     return phc;
-}
+}*/
 
 int http_download_start_task(void* task_id)
 {

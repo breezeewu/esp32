@@ -22,7 +22,6 @@
 #define lbinfo printf
 #endif
 
-//#define lbmake_be_word(a, b)        a << 8 | b
 /*#ifndef  lbmemory
 #define lbmemory(level, ptr, len, fmt, ...)
 //srs_trace_memory((const char*)ptr, len, ##__VA_ARGS__)
@@ -31,11 +30,6 @@
 #ifndef lbmalloc
 #define lbmalloc(size) malloc(size);
 #endif
-
-#ifndef lbzmalloc
-#define lbzmalloc(num, type) (type*)calloc(num, sizeof(type))
-#endif
-
 #ifndef lbfree
 #define lbfree(p) if(p) { free(p); p = NULL; }
 #endif
@@ -86,6 +80,8 @@
 #define lbmax(a,b) ((a) > (b) ? (a) : (b))
 #define lbmin(a,b) ((a) > (b) ? (b) : (a))
 
+#define lbsleep(sec)        sleep(sec)
+#define lbusleep(us)        usleep(us)
 
 // delete ptr of which create by new
 #define lbdel(ptr) if(ptr){ delete ptr; ptr = NULL; }

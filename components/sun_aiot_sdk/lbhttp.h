@@ -136,7 +136,9 @@ typedef struct{
     int             body_len;
     int             complete;*/
 } lbhttp_request_context;
-//typedef int (*on_http_msg_cb)(void* task_id, void* userdata, int http_msg_id, lbhttp_progress_info* phpi, int percent);
+
+typedef void (*on_http_msg_cb)(void* task_id, void* powner, long msg_id, long wparam, long lparam);
+
 typedef struct{
     int         http_progress_status;
     long        lpercent;

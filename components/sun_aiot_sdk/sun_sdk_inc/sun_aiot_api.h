@@ -1,5 +1,6 @@
 #ifndef _SUN_AIOT_API_H_
 #define _SUN_AIOT_API_H_
+#include "mqtt_client.h"
 //#include "../mqtt_client.h"
 //#include "sun_aiot_mqtt_api.h"
 #include <stdint.h>
@@ -25,9 +26,9 @@ typedef enum{
 
 typedef enum{
     // MQTT服务质量，最多发送一次
-    e_aiot_mqtt_atmost_once      = 0,
+    e_aiot_mqtt_at_most_once      = 0,
     // MQTT服务质量，至少一次
-    e_aiot_mqtt_atleast_once     = 1,
+    e_aiot_mqtt_at_least_once     = 1,
     // MQTT服务质量，仅仅一次
     e_aiot_mqtt_accurate_once    = 2
 } e_aiot_mqtt_qos;
@@ -49,8 +50,8 @@ typedef struct{
     long    ldownload_bytes;    // current http file download bytes
     long    ltotal_bytes;       // total http file download bytes
     long    lspend_time_ms;     // http download in millisecond
-    char*   pdata;              // current download data
-    int     ndata_len;          // pdata valid datalen 
+    //char*   pdata;              // current download data
+    //int     ndata_len;          // pdata valid datalen 
 } http_download_info;
 
 typedef struct{
@@ -58,6 +59,18 @@ typedef struct{
     int     region;                     // 地区
     char    version[12];                // 版本号，六位或者八位，00.00.00 或 00.00.00.00
 } aiot_ota_info;
+
+typedef enum{
+    e_aiot_ota_msg_type_error                       = -1,       // an error occure when ota, wparam:errno(), lparam:error code
+    e_aiot_ota_msg_type_prepared                    = 0,        // ota prepare, wparam:0, lparam:0
+    e_aiot_ota_msg_type_connected                   = 1,        // ota http reuqest connecte, wparam:0, lparam:0
+    e_aiot_ota_msg_type_download_progress           = 2,        // ota package in download progress, wparam:current download speed(bps), lparam:current download percent
+    e_aiot_ota_msg_type_download_complete           = 3,        // ota package download complete, wparam:0, lparam:0
+    e_aiot_ota_msg_type_ota_end                     = 4,        // ota package have been download and write to flash, wparam:0, lparam:0
+    e_aiot_ota_msg_type_reboot                      = 5,        // ota task end, reboot the system, wparam:0, lparam:0
+} e_aiot_ota_msg_type;
+
+
 typedef enum{
     e_aiot_http_msg_on_connect_complete             = 0,    // http connect complete, wparam:0, lparam:0
     e_aiot_http_msg_on_request_header_complete      = 1,    // request send complete, wparam:0, lparam:0
@@ -71,18 +84,19 @@ typedef enum{
 } e_aiot_http_msg_type;
 
 /*
-* @descripe：下载回调函数
+* @descripe：OTA任务回调函数
 *
-* @param[in] task_id: http下载任务taskid
-* @param[in] userdata: 下载调用者的对象指针
-* @param[in] msg_id:http消息id
-* @param[in] wparam：http消息辅助说明参数
-* @param[in] lparam：http消息值
+* @param[in] task_id: OTA任务任务taskid
+* @param[in] userdata: OTA调用者的对象指针
+* @param[in] msg_id: OTA消息id
+* @param[in] wparam：OTA消息辅助说明参数
+* @param[in] lparam：OTA消息值
 *
 * @return 无
 */
-typedef void (*on_http_msg_cb)(void* task_id, void* userdata, long msg_id, long wparam, long lparam);
+typedef void (*on_ota_msg_cb)(void* powner, long msg_id, long wparam, long lparam);
 
+//typedef void (*on_http_msg_cb)(void* task_id, void* powner, long msg_id, long wparam, long lparam);
 /*
 * @descripe：下载回调函数
 *
@@ -95,7 +109,20 @@ typedef void (*on_http_msg_cb)(void* task_id, void* userdata, long msg_id, long 
 *
 * @return 无
 */
-typedef void (*on_download_cb)(void* task_id, void* userdata, long speed, long download_bytes, long toatal_bytes, long spend_time_ms);
+
+//typedef void (*on_download_cb)(void* task_id, void* userdata, long speed, long download_bytes, long toatal_bytes, long spend_time_ms);
+
+/*
+* @descripe：mqtt事件回调通知函数
+*
+* @param[in] handle: 调用者指针
+* @param[in] const char* base: 
+* @param[in] int32_t event_id: 事件id
+* @param[in] void *event_data: 事件内容结构体
+*
+* @return 无
+*/
+//typedef void (*on_mqtt_event_cb)(void *owner, const char* base, int32_t event_id, void *event_data);
 
 /*
 * @descripe：订阅主题回调消息函数定义
@@ -110,7 +137,6 @@ typedef void (*on_download_cb)(void* task_id, void* userdata, long speed, long d
 * @return 无
 */
 
-typedef void (*mqtt_event_callback)(void *handler_args, const char* base, int32_t event_id, void *event_data);
 typedef void (*on_mqtt_subscribe_cb)(void* handle, void * userdata, const char* ptopic, void* payload, int payload_len, e_aiot_mqtt_qos qos);
 
 /*
@@ -201,7 +227,17 @@ int sun_aiot_api_http_post(void* handle, const char* path, const char* req, int*
  * @param[in] pota_info, ota info struct ptr
  * @return 成功返回非零的taskid，失败返回NULL
  */
-void* sun_aiot_api_create_oat_download_task(void* handle, const char* dst_path, on_http_msg_cb download_cb, void* owner, aiot_ota_info* pota_info);
+void* sun_aiot_api_create_oat_task(void* handle, aiot_ota_info* pota_info);
+
+/*
+ * @descripe: 设置下载任务回调通知函数
+ *
+ * @param[in] handle: aiot实例句柄
+ * @param[in] download_cb: http 下载进度回调通知函数
+ * @param[in] owner, http download cb owner
+ * @return 成功返回0，否则为失败
+ */
+int sun_aiot_api_set_ota_callback(void* task_id, on_ota_msg_cb ota_cb, void* owner);
 
 /*
  * @descripe: 创建http下载路径
@@ -226,7 +262,7 @@ void* sun_aiot_api_create_oat_download_task(void* handle, const char* dst_path, 
  * 
  * @return 成功返回非零的taskid，失败返回NULL
  */
-int sun_aiot_api_http_download_start(void* task_id);
+int sun_aiot_api_ota_start(void* task_id);
 //void* sun_aiot_api_http_download_start(void* handle, const char* path, int* phttp_code, const char* dst_path, on_http_msg_cb download_cb, void* owner);
 
 /*
@@ -253,7 +289,7 @@ int sun_aiot_api_http_download_start(void* task_id);
  * @return 返回当前下载进度百分比
  * remark：本接口与http回调接口on_http_msg_cb的回调参数对应，调用者可以二选一使用
  */
-int sun_aiot_api_http_download_get_progress(void* task_id, e_aiot_http_msg_type* msg_type, http_download_info* phdp, int* percent);
+int sun_aiot_api_ota_get_progress(void* task_id, e_aiot_ota_msg_type* msg_type, http_download_info* phdp, int* percent);
 //int sun_aiot_api_http_download_get_progress(void* task_id, long* speed, long* download_bytes, long* total_bytes, long* spend_time_ms);
 /*
  * @descripe: 停止并销毁http下载任务
@@ -262,7 +298,7 @@ int sun_aiot_api_http_download_get_progress(void* task_id, e_aiot_http_msg_type*
  * 
  * @return 成功返回0，否则为失败
  */
-int sun_aiot_api_http_download_stop(void* task_id);
+int sun_aiot_api_ota_stop(void* task_id);
 
 /*
  * @descripe: 获取aiot sdk版本信息
@@ -276,7 +312,7 @@ int sun_aiot_api_version(char* szver, int len);
 
 /*************************************************************** mqtt api *******************************************************************/
 
-int sun_aiot_api_mqtt_register_event_handle(void* handle, mqtt_event_callback mqtt_event_cb, void* powner);
+int sun_aiot_api_mqtt_register_event_handle(void* handle, esp_event_handler_t mqtt_event_cb, void* powner);
 /*
  * @descripe: 向指定订阅主题发送一条消息报文到MQTT服务器
  *

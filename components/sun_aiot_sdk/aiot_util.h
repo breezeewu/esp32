@@ -98,7 +98,7 @@ int fetch_int_from_json(struct cJSON* pjn, const char* pkey, int* pnval);
 
 int fetch_double_from_json(struct cJSON* pjn, const char* pkey, double* pdval);
 
-void* http_create_download_task(sun_aiot_context* psac, const char* purl, const char* dst_path, on_download_cb download_cb, void* owner);
+//void* http_create_download_task(sun_aiot_context* psac, const char* purl, const char* dst_path, on_download_cb download_cb, void* owner);
 
 int http_download_start_task(void* task_id);
 //void* http_download_start_task(const char* purl, int* phttp_code, const char* dst_path, on_download_cb download_cb, void* owner);
